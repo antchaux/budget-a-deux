@@ -1,6 +1,6 @@
 /* Service worker : l'application fonctionne hors ligne une fois ouverte.
    Les données ne passent jamais par ici : elles restent chiffrées dans IndexedDB. */
-const VERSION = "v1.2.0";
+const VERSION = "v1.2.1";
 const SHELL = ["./", "index.html", "js/vault.js", "js/lock.js", "js/drive.js", "js/app.js", "js/sync.js", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png", "icons/icon-maskable-512.png"];
 const LIBS = ["https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"];
