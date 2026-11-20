@@ -44,7 +44,7 @@ const CATS = [
   {id:"exc",name:"Dépenses exceptionnelles",g:"exc"},
 ];
 CATS.forEach(c=>c.subs=c.subs||[]);
-const REV = [{id:"salaire",name:"Salaire"},{id:"bonus",name:"Bonus"},{id:"reer",name:"REER"},{id:"impot",name:"Retours d'impôt"},{id:"dividendes",name:"Dividendes"},{id:"r_cadeaux",name:"Cadeaux reçus"},{id:"rembours",name:"Remboursements"},{id:"assurances",name:"Assurances"},{id:"r_autres",name:"Autres revenus"}];
+const REV = [{id:"salaire",name:"Salaire"},{id:"bonus",name:"Bonus"},{id:"reer",name:"REER"},{id:"impot",name:"Retours d'impôt"},{id:"dividendes",name:"Dividendes"},{id:"r_cadeaux",name:"Cadeaux reçus"},{id:"rmb_med",name:"Remboursements médicaux"},{id:"rmb_pro",name:"Remboursements professionnels"},{id:"rembours",name:"Remboursements (autres)"},{id:"assurances",name:"Assurances"},{id:"r_autres",name:"Autres revenus"}];
 const EPARGNE = [{id:"celiapp",name:"CeliApp"},{id:"matelas",name:"Matelas de sécurité",virtual:true}];
 const catById = id => CATS.find(c=>c.id===id) || REV.find(c=>c.id===id) || EPARGNE.find(c=>c.id===id);
 const catName = id => catById(id)?.name || "—";
@@ -77,6 +77,7 @@ function freshState(){
     excAnnual:0,
     catMode:{soins:"annee",permis:"annee"},
     salary:{A:0,B:0}, // salaire annuel net
+    income:{A:{rmb_med:0,rmb_pro:0},B:{rmb_med:0,rmb_pro:0}}, // remboursements attendus par an
     events:[], // suivi annuel des catégories ponctuelles
     tx:[], rules:{}, imports:[], history:[], historyFile:null,
     planned:[],
@@ -139,6 +140,7 @@ function classify(row, account){
   const capped = c => Math.min(c, S.threshold-1);
   if (/pai\. carte|paiement du/.test(d)) return {type:"paiement_carte",cat:null,budget:null,conf:100,why:"Paiement de carte reconnu"};
   if (/achat placement|placement|celi/.test(d)) return {type:"epargne",cat:"celiapp",budget:owner,conf:100,why:"Placement reconnu (CeliApp)"};
+  if (row.amount>0 && /croix bleue|croix-bleue|sun life|manuvie|manulife|canada vie|great-west|desjardins assur|ssq|beneva|la capitale/.test(d)) return {type:"revenu",cat:"rmb_med",budget:owner,conf:90,why:"Remboursement d'assurance reconnu"};
   if (/salaire|paye/.test(d)) return {type:"revenu",cat:"salaire",budget:owner,conf:100,why:"Salaire reconnu"};
   if (isInterac(m)){
     // Toujours à valider : on propose la catégorie des virements récurrents du même montant
@@ -317,7 +319,8 @@ function readHistory(sheets, year, fileName){
         else if (typeof day==="string"){ const m=day.match(/^(\d{1,2})/); if(m) date=`${year}-${pad(mi+1)}-${pad(+m[1])}`; }
         let noDate=false; if (!date){ date=`${year}-${pad(mi+1)}-01`; noDate=true; problems.push(`${name} : « ${r[b.desc]??""} » (${amt} $) sans date, placée au 1er du mois`); }
         const rawCat = r[b.cat]||"";
-        const cat = mapCat(rawCat, b.kind==="dep" ? [...CATS,...EPARGNE] : REV);
+        let cat = mapCat(rawCat, b.kind==="dep" ? [...CATS,...EPARGNE] : REV);
+        if (cat==="rembours" && /croix|bleu|assur|sun ?life|manuvie|medic|psy|dentist|pharma|ssq|beneva/.test(norm(r[b.desc]))) cat="rmb_med";
         if (rawCat && !cat) unknownCats[rawCat]=(unknownCats[rawCat]||0)+1;
         const pour = personOf(r[b.pour]);
         const payer = b.kind==="dep" ? personOf(r[b.par]) : pour;
@@ -418,7 +421,8 @@ window.addEventListener("pagehide", flushSave);
 const DEFAULT_CATS = CATS.map(c=>({...c}));
 function boot(data, keepView){
   const base = freshState(); S = {...base, ...(data||{})};
-  for (const k of ["budgets","savings","salary","names"]) S[k] = {...base[k], ...(data?.[k]||{})};
+  for (const k of ["budgets","savings","salary","names","income"]) S[k] = {...base[k], ...(data?.[k]||{})};
+  for (const p of ["A","B"]) S.income[p] = {...base.income[p], ...(S.income[p]||{})};
   // Ordre, groupe et étiquettes des catégories
   CATS.length=0; DEFAULT_CATS.forEach(c=>CATS.push({...c, subs:[...c.subs]}));
   if (data?.catOrder){ const pos=Object.fromEntries(data.catOrder.map((x,i)=>[x.id,i])); for (const c of CATS){ const o=data.catOrder.find(x=>x.id===c.id); if(o) c.g=o.g; } CATS.sort((a,b)=>(pos[a.id]??999)-(pos[b.id]??999)); }
@@ -446,7 +450,7 @@ function render(){
   document.querySelectorAll(".nav-btn").forEach(b=>b.setAttribute("aria-current", b.dataset.view===UI.view?"page":"false"));
   const n = toValidate().length; const bv=$("#badge-val"); bv.hidden=!n; bv.textContent=n;
   const days = S.lastBackup ? dayDiff(TODAY,S.lastBackup) : null;
-  $("#side-foot").innerHTML = `<div><span class="status-dot" style="background:${days==null||days>7?"var(--warn)":"var(--good)"}"></span>Sauvegarde : ${days==null?"aucune":days===0?"aujourd'hui":`il y a ${days} j`}</div><div>${Sync.side()}<button class="btn small" data-act="lock" style="margin-top:4px">Verrouiller</button><div class="muted" style="font-size:.7rem">Version 1.1.3</div>`;
+  $("#side-foot").innerHTML = `<div><span class="status-dot" style="background:${days==null||days>7?"var(--warn)":"var(--good)"}"></span>Sauvegarde : ${days==null?"aucune":days===0?"aujourd'hui":`il y a ${days} j`}</div><div>${Sync.side()}<button class="btn small" data-act="lock" style="margin-top:4px">Verrouiller</button><div class="muted" style="font-size:.7rem">Version 1.2.0</div>`;
   $("#view").innerHTML = ({tableau:vDash,transactions:vTx,importer:vImport,budgets:vBudgets,comptes:vAccounts,parametres:vSettings})[UI.view]();
 }
 const note = s => `<div class="proto-note">${s}</div>`;
@@ -976,14 +980,21 @@ function vBudgets(){
   const cols = ["commun","A","B"];
   const monthsTo = d => { const [y,m]=d.split("-").map(Number); const [ty,tm]=TODAY.split("-").map(Number); return Math.max(1,(y-ty)*12+(m-tm)); };
   const tot = f => budgetCats().reduce((s,c)=>s+f(c.id),0);
-  const salRow = p => { const sal=S.salary?.[p]||0, mb=budgetTotal(p)+EPARGNE.reduce((s,e)=>s+(S.savings[p]?.[e.id]||0),0)/12, y=TODAY.slice(0,4);
-    const got = r2(S.tx.filter(t=>t.type==="revenu"&&t.cat==="salaire"&&acc(t.acc).owner===p&&t.date.startsWith(y)).reduce((s,t)=>s+t.amount,0));
-    return `<tr><td>${esc(S.names[p])}</td><td class="r"><input class="amtin num" style="width:110px" type="number" min="0" step="100" id="sal-${p}" value="${sal||""}" placeholder="0" aria-label="Salaire annuel ${esc(S.names[p])}"></td>
-      <td class="r num">${sal?fmt(sal/12):"—"}</td><td class="r num">${fmt0(mb)}</td><td class="r num">${sal?`<span class="chip ${sal/12-mb<0?"bad":"good"}">${fmt(sal/12-mb)}</span>`:"—"}</td><td class="r num muted">${fmt(got)}</td></tr>`; };
+  const y = TODAY.slice(0,4);
+  const received = (p, cat) => r2(S.tx.filter(t=>t.type==="revenu"&&t.cat===cat&&acc(t.acc).owner===p&&t.date.startsWith(y)).reduce((s,t)=>s+t.amount,0));
+  const inField = (id, v, label) => `<input class="amtin num" style="width:104px" type="number" min="0" step="50" id="${id}" value="${v||""}" placeholder="0" aria-label="${esc(label)}">`;
+  const salRow = p => { const sal=S.salary?.[p]||0, med=S.income[p]?.rmb_med||0, pro=S.income[p]?.rmb_pro||0, tot=sal+med+pro;
+    const mb=budgetTotal(p)+EPARGNE.reduce((s,e)=>s+(S.savings[p]?.[e.id]||0),0)/12;
+    const got = c => `<div class="small muted">${fmt0(received(p,c))} reçus</div>`;
+    return `<tr><td>${esc(S.names[p])}</td>
+      <td class="r">${inField("sal-"+p, sal, "Salaire annuel "+S.names[p])}${got("salaire")}</td>
+      <td class="r">${inField("inc-"+p+"-rmb_med", med, "Remboursements médicaux annuels "+S.names[p])}${got("rmb_med")}</td>
+      <td class="r">${inField("inc-"+p+"-rmb_pro", pro, "Remboursements professionnels annuels "+S.names[p])}${got("rmb_pro")}</td>
+      <td class="r num">${tot?fmt(tot/12):"—"}</td><td class="r num">${fmt0(mb)}</td><td class="r num">${tot?`<span class="chip ${tot/12-mb<0?"bad":"good"}">${fmt(tot/12-mb)}</span>`:"—"}</td></tr>`; };
   return `<div class="toolbar"><h1>Budgets mensuels</h1></div>
-  <div class="card"><div class="card-h"><h2>Revenus</h2><span class="small muted">Salaire annuel net, après impôts</span></div>
-    <div class="table-x"><table><thead><tr><th>Personne</th><th class="r">Salaire annuel</th><th class="r">Par mois</th><th class="r">Budget du mois</th><th class="r">Marge par mois</th><th class="r">Salaire reçu en ${TODAY.slice(0,4)}</th></tr></thead><tbody>${salRow("A")}${salRow("B")}</tbody></table></div>
-    <div class="small muted" style="margin-top:8px">Budget du mois = perso + 50 % du commun + épargne réservée. La marge est ce qui reste chaque mois si le budget est respecté.</div></div>
+  <div class="card"><div class="card-h"><h2>Revenus</h2><span class="small muted">Montants annuels nets · reçus en ${y} sous chaque champ</span></div>
+    <div class="table-x"><table><thead><tr><th>Personne</th><th class="r">Salaire</th><th class="r">Rembours. médicaux</th><th class="r">Rembours. professionnels</th><th class="r">Revenus par mois</th><th class="r">Budget du mois</th><th class="r">Marge par mois</th></tr></thead><tbody>${salRow("A")}${salRow("B")}</tbody></table></div>
+    <div class="small muted" style="margin-top:8px">Remboursements médicaux : assurance collective, Croix Bleue, etc. Remboursements professionnels : frais de travail remboursés par l'employeur. Budget du mois = perso + 50 % du commun + épargne réservée. La marge est ce qui reste chaque mois si le budget est respecté.</div></div>
   ${note(`Montants par mois, sauf en suivi annuel où vous saisissez le montant de l'année (pratique pour la coiffure ou le permis). Étiquettes : « fixe » garde la catégorie verte jusqu'à 100 % de son budget ; « à confirmer » fait valider chaque transaction de la catégorie. Saisissez le commun à 100 % et le perso de chacun. Le budget de ${esc(S.names.A)} et celui de ${esc(S.names.B)} comprennent automatiquement 50 % du commun, comme dans votre fichier Excel (loyer de 1 640 $ → 820 $ chacun).`)}
   ${GROUPS.map(g=>`<div class="card"><div class="card-h"><h2>${esc(g.name)}</h2><span class="small muted">Glissez ⠿ pour réordonner · touchez une étiquette pour l'activer</span></div><div class="table-x"><table class="bud-table"><thead><tr><th>Catégorie</th>${cols.map(b=>`<th class="r">${b==="commun"?"Commun (100 %)":esc(S.names[b])+" perso"}</th>`).join("")}<th class="r">Total ${esc(S.names.A)}</th><th class="r">Total ${esc(S.names.B)}</th><th>Suivi</th></tr></thead><tbody>
     ${CATS.filter(c=>c.g===g.id).length?"":`<tr class="drow-empty" data-group="${g.id}"><td colspan="7" class="small muted">Déposez une catégorie ici</td></tr>`}
@@ -1202,6 +1213,7 @@ document.addEventListener("change", e=>{
   if (el.id==="od-date"||el.id==="od-amt"){ S.openingDebt={date:$("#od-date").value||"2026-01-01",amount:parseFloat($("#od-amt").value)||0}; render(); return; }
   if (el.id && el.id.startsWith("sv-")){ const [,p,c]=el.id.split("-"); S.savings[p][c]=Math.max(0,parseFloat(el.value)||0); render(); return; }
   if (el.dataset.mode){ S.catMode[el.dataset.mode]=el.value; const c=catById(el.dataset.mode); toast(`« ${c.name} » suivie sur une base ${el.value==="annee"?"annuelle":"mensuelle"}.`); render(); return; }
+  if (el.id && el.id.startsWith("inc-")){ const [,p,c]=el.id.match(/^inc-(A|B)-(.+)$/); S.income[p][c]=Math.max(0,parseFloat(el.value)||0); render(); return; }
   if (el.id && el.id.startsWith("sal-")){ S.salary[el.id.slice(4)]=Math.max(0,parseFloat(el.value)||0); render(); return; }
   if (el.id==="exc-in"){ S.excAnnual=Math.max(0,parseFloat(el.value)||0); render(); return; }
   if (el.id==="nm-A"||el.id==="nm-B"){ S.names[el.id.slice(3)]=el.value.trim()||el.id.slice(3); render(); return; }
