@@ -80,8 +80,12 @@ const Drive = (() => {
       const views = kind === "folder"
         ? [new P.DocsView(P.ViewId.FOLDERS).setSelectFolderEnabled(true).setIncludeFolders(true).setMimeTypes("application/vnd.google-apps.folder").setOwnedByMe(true),
            new P.DocsView(P.ViewId.FOLDERS).setSelectFolderEnabled(true).setIncludeFolders(true).setMimeTypes("application/vnd.google-apps.folder").setOwnedByMe(false)]
-        : [new P.DocsView(P.ViewId.DOCS).setQuery(CFG.fileName).setIncludeFolders(false).setOwnedByMe(false),
-           new P.DocsView(P.ViewId.DOCS).setQuery(CFG.fileName).setIncludeFolders(false).setOwnedByMe(true)];
+        : [// 1. Parcourir les dossiers partagés avec moi (le dossier commun d'Antoine pour Amandine)
+           new P.DocsView(P.ViewId.DOCS).setIncludeFolders(true).setSelectFolderEnabled(false).setOwnedByMe(false).setLabel("Partagés avec moi"),
+           // 2. Parcourir Mon Drive
+           new P.DocsView(P.ViewId.DOCS).setIncludeFolders(true).setSelectFolderEnabled(false).setOwnedByMe(true).setLabel("Mon Drive"),
+           // 3. Recherche directe par nom
+           new P.DocsView(P.ViewId.DOCS).setQuery("budget-a-deux").setIncludeFolders(false).setLabel("Recherche")];
       let b = new P.PickerBuilder().setOAuthToken(token).setDeveloperKey(CFG.apiKey).setAppId(CFG.appId).setLocale("fr")
         .setTitle(kind === "folder" ? "Choisissez votre dossier partagé" : `Choisissez le fichier ${CFG.fileName}`)
         .setCallback(d => { if (d.action === P.Action.PICKED) ok(d.docs[0]); else if (d.action === P.Action.CANCEL) ko(new Error("Aucun élément choisi.")); });
