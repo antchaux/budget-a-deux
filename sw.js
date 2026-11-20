@@ -1,6 +1,6 @@
 /* Service worker : l'application fonctionne hors ligne une fois ouverte.
    Les données ne passent jamais par ici : elles restent chiffrées dans IndexedDB. */
-const VERSION = "v1.1.0";
+const VERSION = "v1.1.1";
 const SHELL = ["./", "index.html", "js/vault.js", "js/lock.js", "js/drive.js", "js/app.js", "js/sync.js", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png", "icons/icon-maskable-512.png"];
 const LIBS = ["https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"];
@@ -19,7 +19,7 @@ self.addEventListener("fetch", e => {
   const url = new URL(req.url);
   const mine = url.origin === location.origin, lib = LIBS.includes(req.url), font = /fonts\.(googleapis|gstatic)\.com/.test(url.host);
   if (!mine && !lib && !font) return;
-  e.respondWith(fetch(req).then(res => {
+  e.respondWith(fetch(req, mine ? { cache: "no-cache" } : undefined).then(res => {
     if (res.ok) { const copy = res.clone(); caches.open(VERSION).then(c => c.put(req, copy)); }
     return res;
   }).catch(() => caches.match(req).then(r => r || (req.mode === "navigate" ? caches.match("index.html") : Response.error()))));
