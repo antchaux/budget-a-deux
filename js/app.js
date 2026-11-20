@@ -446,7 +446,7 @@ function render(){
   document.querySelectorAll(".nav-btn").forEach(b=>b.setAttribute("aria-current", b.dataset.view===UI.view?"page":"false"));
   const n = toValidate().length; const bv=$("#badge-val"); bv.hidden=!n; bv.textContent=n;
   const days = S.lastBackup ? dayDiff(TODAY,S.lastBackup) : null;
-  $("#side-foot").innerHTML = `<div><span class="status-dot" style="background:${days==null||days>7?"var(--warn)":"var(--good)"}"></span>Sauvegarde : ${days==null?"aucune":days===0?"aujourd'hui":`il y a ${days} j`}</div><div>${Sync.side()}<button class="btn small" data-act="lock" style="margin-top:4px">Verrouiller</button>`;
+  $("#side-foot").innerHTML = `<div><span class="status-dot" style="background:${days==null||days>7?"var(--warn)":"var(--good)"}"></span>Sauvegarde : ${days==null?"aucune":days===0?"aujourd'hui":`il y a ${days} j`}</div><div>${Sync.side()}<button class="btn small" data-act="lock" style="margin-top:4px">Verrouiller</button><div class="muted" style="font-size:.7rem">Version 1.1.3</div>`;
   $("#view").innerHTML = ({tableau:vDash,transactions:vTx,importer:vImport,budgets:vBudgets,comptes:vAccounts,parametres:vSettings})[UI.view]();
 }
 const note = s => `<div class="proto-note">${s}</div>`;
