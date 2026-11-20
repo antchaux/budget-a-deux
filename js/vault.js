@@ -13,7 +13,8 @@
 const Vault = (() => {
   const ITER = 600000, ITER_RECOVERY = 100000, VERSION = 1;
   const enc = new TextEncoder(), dec = new TextDecoder();
-  const b64 = buf => btoa(String.fromCharCode(...new Uint8Array(buf)));
+  // Encodage par tranches : un gros fichier ne doit pas dépasser la limite d'arguments du navigateur
+  const b64 = buf => { const u = new Uint8Array(buf); let s = ""; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
   const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
   const rand = n => crypto.getRandomValues(new Uint8Array(n));
 
