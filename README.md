@@ -2,7 +2,7 @@
 
 Application de budget pour Antoine et Amandine : import des relevés CSV Scotiabank, historique Excel, budgets Commun et personnels, avances entre vous, événements, vue mensuelle et annuelle.
 
-Version 1.0 — étape 1 (coffre chiffré, application installable). La synchronisation Google Drive est l'étape 2.
+Version 1.1 — coffre chiffré, application installable, synchronisation Google Drive.
 
 ## Ce que fait cette version
 
@@ -36,9 +36,17 @@ L'application doit être servie en **https** : le chiffrement du navigateur l'ex
 3. **Budgets** et **Paramètres** : ajustez au besoin.
 4. Faites une première **sauvegarde** et rangez le fichier `.budget` dans votre dossier Google Drive partagé.
 
-## En attendant la synchronisation (étape 2)
+## Synchronisation Google Drive
 
-Chaque appareil a pour l'instant son propre coffre. Pour passer les données d'un appareil à l'autre : sauvegarde sur le premier, puis « Restaurer un fichier » sur le second. Utilisez de préférence un seul appareil pour les imports d'ici l'étape 2.
+Le coffre chiffré est déposé dans votre dossier Drive partagé sous le nom `budget-a-deux.budget`. Google ne voit qu'un contenu illisible.
+
+- **Premier appareil** : Paramètres › Synchronisation Google Drive › « Premier appareil : créer le fichier dans le dossier partagé ». Connectez-vous à Google, puis choisissez le dossier partagé.
+- **Autres appareils** (dont ceux d'Amandine, avec son propre compte Google) : à la création du coffre, touchez « Rejoindre le coffre déjà sur Google Drive », choisissez le fichier, puis saisissez le mot de passe commun. Sur un appareil qui a déjà un coffre : Paramètres › « Autre appareil : ouvrir le fichier existant » (les données des deux côtés sont réunies).
+- La synchronisation se fait à l'ouverture, au retour sur l'application, après chaque modification et toutes les 2 minutes. Si les deux appareils ont changé des choses, elles sont réunies transaction par transaction.
+- Google demande de se reconnecter environ toutes les heures : le menu affiche alors « Se connecter à Google ».
+- Un changement de mot de passe sur un appareil s'applique aux autres à la synchronisation suivante.
+
+Configuration Google Cloud (déjà faite) : projet « Budget a deux », API Drive et Picker activées, ID client OAuth limité à `https://antchaux.github.io`, comptes test Antoine et Amandine, portée `drive.file`.
 
 ## Mettre à jour l'application
 
@@ -51,7 +59,9 @@ Remplacez les fichiers dans le dépôt GitHub (même méthode qu'à l'étape 3).
 | `index.html` | Page et styles |
 | `js/vault.js` | Chiffrement, clés, stockage |
 | `js/lock.js` | Écrans de création, déverrouillage, récupération, verrouillage automatique |
+| `js/drive.js` | Connexion Google, sélecteur de dossier/fichier, lecture et écriture sur Drive |
 | `js/app.js` | Application (imports, budgets, tableaux de bord) |
+| `js/sync.js` | Synchronisation et fusion entre appareils |
 | `sw.js`, `manifest.webmanifest`, `icons/` | Installation et fonctionnement hors ligne |
 
 Bibliothèque externe : SheetJS 0.18.5 (lecture du fichier Excel), chargée depuis cdnjs au premier import Excel, puis gardée en cache.

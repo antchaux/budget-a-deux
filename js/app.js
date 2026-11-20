@@ -400,11 +400,23 @@ function toast(msg){ const t=$("#toast"); t.textContent=msg; t.hidden=false; cle
 let saveTimer=null, saving=Promise.resolve();
 function snapshot(){ return {...S, catOrder:CATS.map(c=>({id:c.id,g:c.g})), catFlags:Object.fromEntries(CATS.map(c=>[c.id,{fixed:!!c.fixed,always:!!c.always}]))}; }
 function scheduleSave(){ clearTimeout(saveTimer); saveTimer=setTimeout(flushSave, 400); }
-function flushSave(){ clearTimeout(saveTimer); if (!S || !Vault.isOpen()) return saving; const snap=snapshot(); saving = saving.then(()=>Vault.save(snap)).catch(e=>toast("Enregistrement impossible : "+e.message)); return saving; }
+/* Suivi des changements pour la synchronisation : chaque transaction modifiée reçoit un horodatage (mod),
+   chaque transaction supprimée laisse une trace (deleted), et S.updatedAt avance si quoi que ce soit a changé. */
+let lastTx = new Map(), lastJson = "";
+function contentJson(){ const {updatedAt, ...rest} = snapshot(); return JSON.stringify(rest); }
+function resetBaseline(){ lastTx = new Map(S.tx.map(t=>{ const {mod,...r}=t; return [t.id, JSON.stringify(r)]; })); lastJson = contentJson(); }
+function stampChanges(){
+  const now = Date.now(), seen = new Set(); S.deleted = S.deleted || {};
+  for (const t of S.tx){ const {mod,...r}=t; const j=JSON.stringify(r); seen.add(t.id); if (lastTx.get(t.id)!==j){ t.mod=now; lastTx.set(t.id,j); delete S.deleted[t.id]; } }
+  for (const id of [...lastTx.keys()]) if (!seen.has(id)){ S.deleted[id]=now; lastTx.delete(id); }
+  const j = contentJson(); if (j!==lastJson){ S.updatedAt = now; lastJson = contentJson(); return true; } return false;
+}
+function flushSave(){ clearTimeout(saveTimer); if (!S || !Vault.isOpen()) return saving; const changed=stampChanges(); const snap=snapshot();
+  saving = saving.then(()=>Vault.save(snap)).then(()=>{ if (changed && typeof Sync!=="undefined") Sync.soon(); }).catch(e=>toast("Enregistrement impossible : "+e.message)); return saving; }
 window.addEventListener("pagehide", flushSave);
 /* Ouvre l'application avec les données déchiffrées */
 const DEFAULT_CATS = CATS.map(c=>({...c}));
-function boot(data){
+function boot(data, keepView){
   const base = freshState(); S = {...base, ...(data||{})};
   for (const k of ["budgets","savings","salary","names"]) S[k] = {...base[k], ...(data?.[k]||{})};
   // Ordre, groupe et étiquettes des catégories
@@ -412,9 +424,12 @@ function boot(data){
   if (data?.catOrder){ const pos=Object.fromEntries(data.catOrder.map((x,i)=>[x.id,i])); for (const c of CATS){ const o=data.catOrder.find(x=>x.id===c.id); if(o) c.g=o.g; } CATS.sort((a,b)=>(pos[a.id]??999)-(pos[b.id]??999)); }
   if (data?.catFlags) for (const c of CATS){ const f=data.catFlags[c.id]; if (f){ c.fixed=f.fixed; c.always=f.always; } }
   delete S.catOrder; delete S.catFlags;
-  UI.month=null; UI.pending=null; UI.hist=null;
-  { const h=location.hash.slice(1); UI.view = VIEWS.includes(h) ? h : "tableau"; }
+  S.deleted = S.deleted || {};
+  resetBaseline();
+  if (!keepView){ UI.month=null; UI.pending=null; UI.hist=null;
+    const h=location.hash.slice(1); UI.view = VIEWS.includes(h) ? h : "tableau"; }
   render();
+  if (!keepView && typeof Sync!=="undefined") Sync.onOpen();
 }
 function download(name, text, type){
   const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([text],{type})); a.download=name; document.body.appendChild(a); a.click();
@@ -423,7 +438,7 @@ function download(name, text, type){
 async function backupNow(){
   await flushSave(); S.lastBackup = TODAY; await flushSave();
   download(`budget-a-deux-${TODAY}.budget`, Vault.exportFile(), "application/json");
-  toast("Sauvegarde chiffrée téléchargée. Rangez-la dans votre dossier Drive partagé."); render();
+  toast("Sauvegarde chiffrée téléchargée."); render();
 }
 function render(){
   if (!S) return;
@@ -431,7 +446,7 @@ function render(){
   document.querySelectorAll(".nav-btn").forEach(b=>b.setAttribute("aria-current", b.dataset.view===UI.view?"page":"false"));
   const n = toValidate().length; const bv=$("#badge-val"); bv.hidden=!n; bv.textContent=n;
   const days = S.lastBackup ? dayDiff(TODAY,S.lastBackup) : null;
-  $("#side-foot").innerHTML = `<div><span class="status-dot" style="background:${days==null||days>7?"var(--warn)":"var(--good)"}"></span>Sauvegarde : ${days==null?"aucune":days===0?"aujourd'hui":`il y a ${days} j`}</div><div><span class="status-dot" style="background:var(--fg-3)"></span>Drive : à configurer</div><button class="btn small" data-act="lock" style="margin-top:4px">Verrouiller</button>`;
+  $("#side-foot").innerHTML = `<div><span class="status-dot" style="background:${days==null||days>7?"var(--warn)":"var(--good)"}"></span>Sauvegarde : ${days==null?"aucune":days===0?"aujourd'hui":`il y a ${days} j`}</div><div>${Sync.side()}<button class="btn small" data-act="lock" style="margin-top:4px">Verrouiller</button>`;
   $("#view").innerHTML = ({tableau:vDash,transactions:vTx,importer:vImport,budgets:vBudgets,comptes:vAccounts,parametres:vSettings})[UI.view]();
 }
 const note = s => `<div class="proto-note">${s}</div>`;
@@ -819,7 +834,7 @@ function analyze(p, accId){
 function doImport(){
   const P = UI.pending, a = acc(P.accId);
   if (P.parsed.kind==="carte" && P.parsed.last4 && !a.last4) a.last4 = P.parsed.last4;
-  const imp = {id:nid("imp"),at:new Date().toISOString().slice(0,16).replace("T"," "),file:P.parsed.fileName,acc:a.id,period:P.parsed.period,added:0,skipped:0,fromExcel:0,snapshot:{opening:a.opening?{...a.opening}:null,bank:a.bank?{...a.bank}:null}};
+  const imp = {id:nid("imp"),at:(d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`)(new Date()),file:P.parsed.fileName,acc:a.id,period:P.parsed.period,added:0,skipped:0,fromExcel:0,snapshot:{opening:a.opening?{...a.opening}:null,bank:a.bank?{...a.bank}:null}};
   const added=[];
   for (const it of P.items){
     if (!it.include){ imp.skipped++; continue; }
@@ -1085,9 +1100,10 @@ function vSettings(){
         <button class="btn" type="submit">Changer le mot de passe</button></form>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn" data-act="new-recovery">Générer une nouvelle clé de récupération</button><button class="btn" data-act="lock">Verrouiller maintenant</button></div>
       <div class="small muted" style="margin-top:8px">Une nouvelle clé de récupération remplace l'ancienne, qui ne fonctionnera plus.</div></div>
+    ${Sync.card()}
     <div class="card"><div class="card-h"><h2>Sauvegarde</h2></div>
       <dl class="kv"><dt>Dernière sauvegarde</dt><dd>${S.lastBackup||"aucune"} ${!S.lastBackup||dayDiff(TODAY,S.lastBackup)>7?`<span class="chip warn">! plus de 7 jours</span>`:`<span class="chip good">✓</span>`}</dd>
-        <dt>Synchronisation Drive</dt><dd>Prochaine étape. En attendant, rangez les sauvegardes dans votre dossier Drive partagé.</dd></dl>
+</dl>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn primary" data-act="backup">Télécharger une sauvegarde chiffrée</button><button class="btn" data-act="exp-csv">Exporter les transactions (CSV)</button></div>
       <form class="form" data-form="restore" style="margin-top:12px" autocomplete="off">
         <label>Restaurer un fichier .budget<input type="file" id="rs-file" accept=".budget,application/json" required></label>
@@ -1150,6 +1166,12 @@ document.addEventListener("click", e=>{
     toast(act==="h-ign"?"Ligne ignorée.":"Ajoutée au compte « Comptant / autre »."); render(); }
   else if (act==="exp-csv"){ download(`transactions-${TODAY}.csv`, "\uFEFF"+"date,compte,description,montant,type,categorie,sous_categorie,pour_qui,etat\n"+S.tx.map(t=>[t.date,accLabel(acc(t.acc)),prettyDesc(t),t.amount.toFixed(2),t.type,catName(t.cat),t.subcat||"",t.budget?budLabel(t.budget):"",t.status].map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n"), "text/csv"); }
   else if (act==="backup"){ backupNow(); }
+  else if (act==="sync-connect"){ Sync.connect(); }
+  else if (act==="sync-now"){ Sync.now(); }
+  else if (act==="sync-create"){ Sync.linkCreate(); }
+  else if (act==="sync-existing"){ Sync.linkExisting(); }
+  else if (act==="sync-cancel"){ Sync.cancelAsk(); }
+  else if (act==="sync-unlink"){ Sync.unlink(); }
   else if (act==="lock"){ Lock.lockNow(); }
   else if (act==="new-recovery"){ Vault.newRecovery().then(k=>Lock.showRecovery(k, ()=>{ document.getElementById("lock").hidden=true; document.getElementById("app").hidden=false; render(); toast("Nouvelle clé de récupération enregistrée."); })); }
   else if (act==="wipe-ask"||act==="destroy-ask"){ UI.confirm=act==="wipe-ask"?"wipe":"destroy"; render(); }
@@ -1204,6 +1226,8 @@ document.addEventListener("submit", e=>{
   if (f==="event"){ const ev={id:nid("ev"),name:$("#ev-name").value.trim(),date:$("#ev-date").value,cat:($("#ev-cat").value.split("|")[0])||"autres",budget:$("#ev-bud").value||"commun"}; S.events.push(ev); toast(`Événement « ${ev.name} » créé.`); render(); }
   if (f==="pwd"){ const a=$("#np1").value, b=$("#np2").value; if (a.length<10) return toast("Le mot de passe doit contenir au moins 10 caractères."); if (a!==b) return toast("Les deux mots de passe ne sont pas identiques.");
     Vault.setPassword(a).then(()=>{ toast("Mot de passe changé. Pensez à faire une nouvelle sauvegarde."); render(); }); return; }
+  if (f==="sync-secret"){ const b=e.target.querySelector("button[type=submit]"); b.disabled=true; b.textContent="Un instant…";
+    Sync.finishLink($("#sy-secret").value).catch(x=>{ toast(x.message); b.disabled=false; b.textContent="Relier cet appareil"; }); return; }
   if (f==="restore"){ const fl=$("#rs-file").files[0]; if(!fl) return; fl.text().then(t=>Vault.importFile(t,$("#rs-secret").value)).then(d=>{ boot(d); toast("Sauvegarde restaurée."); }).catch(x=>toast(x.message)); return; }
   if (f==="plan"){ S.planned.push({id:nid("p"),name:$("#pl-name").value,date:$("#pl-date").value,amount:parseFloat($("#pl-amt").value),budget:$("#pl-bud").value||"commun",cat:"autres"}); toast("Dépense planifiée."); render(); }
 });

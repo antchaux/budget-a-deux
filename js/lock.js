@@ -30,7 +30,20 @@ const Lock = (() => {
         <p class="lock-err" hidden></p>
         <button class="btn primary" type="submit">Créer le coffre</button>
       </form>
-      <p class="lock-alt">Vous avez déjà une sauvegarde ? <button class="link-btn" data-lk="restore">Restaurer un fichier</button></p>`);
+      <div class="lock-sep">ou</div>
+      <button class="btn" type="button" data-lk="join">Rejoindre le coffre déjà sur Google Drive</button>
+      <p class="lock-alt">Vous avez un fichier de sauvegarde ? <button class="link-btn" data-lk="restore">Restaurer un fichier</button></p>`);
+  }
+  /* Rejoindre via Drive : le fichier a été récupéré, il reste à saisir son mot de passe */
+  function joinScreen(j){
+    mode = "join";
+    show(`<h1>Rejoindre le coffre</h1>
+      <p>Fichier trouvé sur Drive : <b>${esc(j.meta.name)}</b>. Saisissez le mot de passe commun (ou la clé de récupération).</p>
+      <form id="lk-form" autocomplete="off"><label>Mot de passe<input type="password" id="lk-s" required autocomplete="current-password"></label>
+        <p class="lock-err" hidden></p>
+        <button class="btn primary" type="submit">Ouvrir</button></form>
+      <p class="lock-alt"><button class="link-btn" data-lk="back">Retour</button></p>`);
+    joinScreen.j = j;
   }
   function recoveryScreen(key, next){
     mode = "recovery-show";
@@ -102,7 +115,11 @@ const Lock = (() => {
         if (!document.getElementById("lk-ok").checked) return;
         recoveryScreen.next();
       } else if (mode === "unlock"){
+        if (typeof Drive !== "undefined" && Drive.linked() && !Drive.hasToken()) Drive.requestToken().then(() => Sync.now()).catch(() => {});  // dans le geste : la fenêtre Google peut s'ouvrir
         busy(true, "Ouvrir"); opened(await Vault.unlock(v("lk-p")));
+      } else if (mode === "join"){
+        busy(true, "Ouvrir"); const j = joinScreen.j;
+        const data = await Vault.importFile(j.text, v("lk-s")); Sync.finishJoin(j); opened(data);
       } else if (mode === "forgot"){
         busy(true, "Rouvrir"); newPasswordScreen(await Vault.unlockWithRecovery(v("lk-r")));
       } else if (mode === "restore"){
@@ -110,7 +127,7 @@ const Lock = (() => {
         busy(true, "Restaurer"); opened(await Vault.importFile(await f.text(), v("lk-s")));
       }
     } catch (x) {
-      err(x.message || "Une erreur est survenue."); busy(false, ({setup:"Créer le coffre",unlock:"Ouvrir",forgot:"Rouvrir",restore:"Restaurer",newpwd:"Enregistrer et ouvrir"})[mode]);
+      err(x.message || "Une erreur est survenue."); busy(false, ({setup:"Créer le coffre",unlock:"Ouvrir",join:"Ouvrir",forgot:"Rouvrir",restore:"Restaurer",newpwd:"Enregistrer et ouvrir"})[mode]);
     }
   }
   function clicks(e){
@@ -118,6 +135,8 @@ const Lock = (() => {
     const a = b.dataset.lk;
     if (a === "forgot") forgotScreen();
     else if (a === "restore") restoreScreen();
+    else if (a === "join"){ b.disabled = true; b.textContent = "Connexion à Google…";
+      Sync.fetchForJoin().then(joinScreen).catch(x => { b.disabled = false; b.textContent = "Rejoindre le coffre déjà sur Google Drive"; let e = el().querySelector(".lock-err"); if (!e){ e = document.createElement("p"); e.className = "lock-err"; b.after(e); } e.hidden = false; e.textContent = x.message; }); }
     else if (a === "back") Vault.exists().then(x => x ? unlockScreen() : setupScreen());
     else if (a === "copy"){ const t = document.getElementById("lk-key").textContent;
       try { navigator.clipboard.writeText(t).then(() => b.textContent = "Copiée", () => {}); } catch {} }
@@ -141,6 +160,7 @@ const Lock = (() => {
       el().addEventListener("submit", submit);
       el().addEventListener("click", clicks);
       if (!window.crypto?.subtle) return show(`<h1>Navigateur non compatible</h1><p>Le chiffrement nécessite une page sécurisée (https). Ouvrez l'application depuis son adresse https.</p>`);
+      if (typeof Drive !== "undefined") Drive.preload();
       (await Vault.exists()) ? unlockScreen() : setupScreen();
     },
     async lockNow(msg){ if (Lock.beforeLock) await Lock.beforeLock(); Vault.lock(); clearInterval(timer); unlockScreen(msg); },

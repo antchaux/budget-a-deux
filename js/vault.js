@@ -76,7 +76,7 @@ const Vault = (() => {
       const recovery = newRecoveryKey();
       envelope = { app: "budget-a-deux", v: VERSION,
         pwd: await wrap(dataKey, password, ITER), rec: await wrap(dataKey, normRecovery(recovery), ITER_RECOVERY),
-        updated: new Date().toISOString(), box: await seal(dataKey, data) };
+        updated: new Date().toISOString(), keysUpdated: Date.now(), box: await seal(dataKey, data) };
       await idbSet("vault", envelope);
       return recovery;
     },
@@ -93,12 +93,12 @@ const Vault = (() => {
       return open(dataKey, envelope.box);
     },
     async setPassword(password){
-      envelope.pwd = await wrap(dataKey, password, ITER);
+      envelope.pwd = await wrap(dataKey, password, ITER); envelope.keysUpdated = Date.now();
       await idbSet("vault", envelope);
     },
     async newRecovery(){
       const recovery = newRecoveryKey();
-      envelope.rec = await wrap(dataKey, normRecovery(recovery), ITER_RECOVERY);
+      envelope.rec = await wrap(dataKey, normRecovery(recovery), ITER_RECOVERY); envelope.keysUpdated = Date.now();
       await idbSet("vault", envelope);
       return recovery;
     },
@@ -125,5 +125,30 @@ const Vault = (() => {
       return data;
     },
     updated: () => envelope?.updated || null,
+    /* Synchronisation : lire une enveloppe distante avec la clé déjà ouverte.
+       Le mot de passe et la clé de récupération les plus récents sont adoptés. */
+    async openRemote(text){
+      let env; try { env = JSON.parse(text); } catch { throw new Error("Le fichier Drive est illisible."); }
+      if (env.app !== "budget-a-deux" || !env.box) throw new Error("Le fichier Drive n'est pas un fichier Budget à deux.");
+      let data;
+      try { data = await open(dataKey, env.box); }
+      catch { const e = new Error("Le fichier Drive a été chiffré avec un autre coffre. Rouvrez-le depuis Paramètres › Synchronisation."); e.code = "KEY"; throw e; }
+      if ((env.keysUpdated || 0) > (envelope.keysUpdated || 0)){ envelope.pwd = env.pwd; envelope.rec = env.rec; envelope.keysUpdated = env.keysUpdated; await idbSet("vault", envelope); }
+      return data;
+    },
+    /* Déchiffrer un fichier avec un secret sans toucher au coffre local (pour fusionner) */
+    async peekFile(text, secret){
+      let env; try { env = JSON.parse(text); } catch { throw new Error("Ce fichier n'est pas une sauvegarde de Budget à deux."); }
+      if (env.app !== "budget-a-deux" || !env.box) throw new Error("Ce fichier n'est pas une sauvegarde de Budget à deux.");
+      let k;
+      try { k = await unwrap(env.pwd, secret); }
+      catch { try { k = await unwrap(env.rec, normRecovery(secret)); } catch { throw new Error("Mot de passe ou clé de récupération incorrect pour ce fichier."); } }
+      return { env, key: k, data: await open(k, env.box) };
+    },
+    /* Adopter les clés d'un fichier (le coffre de cet appareil devient celui du fichier) */
+    async adopt(peek, data){
+      dataKey = peek.key; envelope = { ...peek.env, box: await seal(dataKey, data), updated: new Date().toISOString() };
+      await idbSet("vault", envelope);
+    },
   };
 })();
