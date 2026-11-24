@@ -31,7 +31,13 @@ function mergeData(L, R){
   // Listes à identifiant : réunion
   const unionById = (a = [], b = []) => { const m = new Map(); for (const x of [...a, ...b]) m.set(x.id, x); return [...m.values()]; };
   out.imports = unionById(older.imports, newer.imports).sort((a, b) => String(b.at).localeCompare(String(a.at)));
-  out.events = unionById(older.events, newer.events);
+  // Événements : la version modifiée le plus récemment, sans ceux supprimés d'un côté
+  const delEv = { ...(older.deletedEv || {}) };
+  for (const [id, x] of Object.entries(newer.deletedEv || {})) delEv[id] = Math.max(delEv[id] || 0, x);
+  const evm = new Map();
+  for (const e of [...(older.events || []), ...(newer.events || [])]){ const c = evm.get(e.id); if (!c || (e.mod || 0) >= (c.mod || 0)) evm.set(e.id, e); }
+  out.events = [...evm.values()].filter(e => !delEv[e.id]);
+  out.deletedEv = delEv;
   out.planned = unionById(older.planned, newer.planned);
   // Règles apprises : réunion par commerçant et montant
   const rules = JSON.parse(JSON.stringify(older.rules || {}));

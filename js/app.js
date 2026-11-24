@@ -452,7 +452,7 @@ function render(){
   document.querySelectorAll(".nav-btn").forEach(b=>b.setAttribute("aria-current", b.dataset.view===UI.view?"page":"false"));
   const n = toValidate().length; const bv=$("#badge-val"); bv.hidden=!n; bv.textContent=n;
   const days = S.lastBackup ? dayDiff(TODAY,S.lastBackup) : null;
-  $("#side-foot").innerHTML = `<div><span class="status-dot" style="background:${days==null||days>7?"var(--warn)":"var(--good)"}"></span>Sauvegarde : ${days==null?"aucune":days===0?"aujourd'hui":`il y a ${days} j`}</div><div>${Sync.side()}<button class="btn small" data-act="lock" style="margin-top:4px">Verrouiller</button><div class="muted" style="font-size:.7rem">Version 1.2.1</div>`;
+  $("#side-foot").innerHTML = `<div><span class="status-dot" style="background:${days==null||days>7?"var(--warn)":"var(--good)"}"></span>Sauvegarde : ${days==null?"aucune":days===0?"aujourd'hui":`il y a ${days} j`}</div><div>${Sync.side()}<button class="btn small" data-act="lock" style="margin-top:4px">Verrouiller</button><div class="muted" style="font-size:.7rem">Version 1.3.0</div>`;
   $("#view").innerHTML = ({tableau:vDash,transactions:vTx,importer:vImport,budgets:vBudgets,comptes:vAccounts,parametres:vSettings})[UI.view]();
 }
 const note = s => `<div class="proto-note">${s}</div>`;
@@ -634,9 +634,16 @@ function eventsCard(){
   const evs = S.events.slice().sort((a,b)=>b.date.localeCompare(a.date));
   return `<div class="card"><div class="card-h"><h2>Événements</h2><span class="small muted">Activités entre amis : dépenses et remboursements reliés</span></div>
     ${evs.length?`<div class="table-x"><table><thead><tr><th>Événement</th><th>Catégorie</th><th class="r">Payé</th><th class="r">Remboursé</th><th class="r">Vrai coût</th><th class="r">${esc(S.names.A)}</th><th class="r">${esc(S.names.B)}</th><th></th></tr></thead><tbody>
-    ${evs.map(ev=>{ const x=eventSummary(ev); return `<tr><td><b>${esc(ev.name)}</b><div class="small muted">${ev.date} · ${x.n} transaction(s)</div></td><td>${esc(catName(ev.cat))}<div class="small muted">${esc(budLabel(ev.budget))}</div></td>
+    ${evs.map(ev=>{ const x=eventSummary(ev);
+      if (UI.evEdit===ev.id) return `<tr class="ev-editing"><td colspan="8"><form class="form" data-form="event-edit" data-ev="${ev.id}" autocomplete="off">
+        <label>Nom<input id="eve-name" value="${esc(ev.name)}" required></label><label>Date<input id="eve-date" type="date" value="${ev.date}" required></label>
+        <label>Catégorie<select id="eve-cat">${catOptions(ev.cat,null,"depense")}</select></label><label>Pour qui<select id="eve-bud">${budOptions(ev.budget)}</select></label>
+        <div style="display:flex;gap:8px;align-items:end"><button class="btn primary" type="submit">Enregistrer</button><button class="btn" type="button" data-act="ev-edit-cancel">Annuler</button></div></form>
+        <div class="small muted" style="margin-top:6px">Les ${x.n} transaction(s) de l'événement prendront la nouvelle catégorie et le nouveau « pour qui ».</div></td></tr>`;
+      return `${UI.evDel===ev.id?`<tr><td colspan="8"><div class="confirm-box" style="margin:0"><b>Supprimer l'événement « ${esc(ev.name)} » ?</b><div class="small">Ses ${x.n} transaction(s) restent, avec leur catégorie actuelle ; elles ne sont simplement plus regroupées.</div>
+        <div style="display:flex;gap:8px;margin-top:8px"><button class="btn" data-act="ev-del-cancel">Annuler</button><button class="btn danger" data-act="ev-del-ok" data-ev="${ev.id}">Supprimer</button></div></div></td></tr>`:""}<tr><td><b>${esc(ev.name)}</b><div class="small muted">${ev.date} · ${x.n} transaction(s)</div></td><td>${esc(catName(ev.cat))}<div class="small muted">${esc(budLabel(ev.budget))}</div></td>
       <td class="r num">${fmt(x.out)}</td><td class="r num amt in">${x.back?"−"+fmt(x.back):fmt(0)}</td><td class="r num"><b>${fmt(x.cost)}</b></td><td class="r num">${fmt(x.A)}</td><td class="r num">${fmt(x.B)}</td>
-      <td><button class="btn small" data-act="ev-see" data-ev="${ev.id}">Voir</button></td></tr>`; }).join("")}</tbody></table></div>`:`<div class="small muted">Aucun événement pour l'instant.</div>`}
+      <td class="ev-acts"><button class="btn small" data-act="ev-see" data-ev="${ev.id}">Voir</button><button class="btn small" data-act="ev-edit" data-ev="${ev.id}" aria-label="Modifier ${esc(ev.name)}">Modifier</button><button class="btn small ghost-bad" data-act="ev-del" data-ev="${ev.id}" aria-label="Supprimer ${esc(ev.name)}">Supprimer</button></td></tr>`; }).join("")}</tbody></table></div>`:`<div class="small muted">Aucun événement pour l'instant.</div>`}
     <form class="form" data-form="event" style="margin-top:12px">
       <label>Nouvel événement<input id="ev-name" required placeholder="Chalet de février"></label>
       <label>Date<input id="ev-date" type="date" value="${TODAY}" required></label>
@@ -699,7 +706,9 @@ function txRow(t){
   const forOther = showBud && t.budget && t.budget!=="commun" && t.budget!==owner;
   return `<div class="tx ${t.status==="avalider"?"flag":""} ${!showCat&&t.type!=="interac"?"dim":""}" data-id="${t.id}">
     <div class="c-date num small">${t.date.slice(8,10)} ${MONTHS[+t.date.slice(5,7)-1].slice(0,4)}.</div>
-    <div class="desc"><b title="${esc(t.desc+" "+t.sub)}">${esc(prettyDesc(t))}</b>${S.events.length&&t.type!=="paiement_carte"?`<select class="ev-sel" data-f="event" aria-label="Événement"><option value="">＋ événement</option>${S.events.map(e=>`<option value="${e.id}" ${t.event===e.id?"selected":""}>◆ ${esc(e.name)}</option>`).join("")}</select>`:""}<small>${t.status==="avalider"?`<span style="color:var(--warn)">À valider · ${esc(t.why||"")}</span>`:forOther?`<span style="color:var(--accent)">Payé par ${esc(S.names[owner])} pour ${esc(S.names[t.budget])}</span>`:esc(t.matchId?"Apparié avec l'autre compte":t.why||"")}</small></div>
+    <div class="desc"><b title="${esc(t.desc+" "+t.sub)}">${esc(prettyDesc(t))}</b>${S.events.length&&t.type!=="paiement_carte"?`<select class="ev-sel" data-f="event" aria-label="Événement"><option value="">＋ événement</option>${S.events.map(e=>`<option value="${e.id}" ${t.event===e.id?"selected":""}>◆ ${esc(e.name)}</option>`).join("")}</select>`:""}<small>${t.status==="avalider"?`<span style="color:var(--warn)">À valider · ${esc(t.why||"")}</span>`:forOther?`<span style="color:var(--accent)">Payé par ${esc(S.names[owner])} pour ${esc(S.names[t.budget])}</span>`:esc(t.matchId?"Apparié avec l'autre compte":t.why||"")}</small>
+      ${UI.noteEdit===t.id ? `<form class="note-form" data-form="note" data-id="${t.id}"><input id="note-in" maxlength="300" value="${esc(t.note||"")}" placeholder="Ex. : cadeau d'anniversaire de Léo" aria-label="Note"><button class="btn small primary" type="submit">OK</button><button class="btn small" type="button" data-act="note-cancel">Annuler</button></form>`
+        : t.note ? `<button class="note" data-act="note-edit" data-id="${t.id}" title="Modifier la note">✎ ${esc(t.note)}</button>` : `<button class="note-add" data-act="note-edit" data-id="${t.id}">+ note</button>`}</div>
     <div class="c-acc small muted">${esc(a?accLabel(a):"?")}</div>
     <div class="c-cat cell">${showCat?`<select data-f="cat" aria-label="Catégorie">${catOptions(t.cat,t.subcat,t.type)}</select>`:`<span class="small muted">Hors budget</span>`}</div>
     <div class="c-bud cell">${showBud?`<select data-f="budget" aria-label="Pour qui">${budOptions(t.budget)}</select>`:""}</div>
@@ -741,7 +750,7 @@ function vTx(){
   if (f.event) L=S.tx.filter(t=>t.event===f.event);
   if (f.acc) L=L.filter(t=>t.acc===f.acc); if (f.bud) L=L.filter(t=>t.budget===f.bud); if (f.cat) L=L.filter(t=>t.cat===f.cat);
   if (f.status==="avalider") L=L.filter(t=>t.status==="avalider"); if (f.status==="neutre") L=L.filter(t=>!counts(t)); if (f.status==="excel") L=L.filter(t=>String(t.why).startsWith("Repris"));
-  if (f.q){ const q=norm(f.q); L=L.filter(t=>norm(t.desc+" "+t.sub).includes(q)); }
+  if (f.q){ const q=norm(f.q); L=L.filter(t=>norm(t.desc+" "+t.sub+" "+(t.note||"")).includes(q)); }
   // Masque seulement les lignes affichées « Hors budget ». Les transactions à valider restent visibles.
   const nHidden = UI.hideNeutral ? L.filter(t=>horsBudget(t)&&t.status!=="avalider").length : 0;
   if (UI.hideNeutral) L=L.filter(t=>!horsBudget(t)||t.status==="avalider");
@@ -1169,6 +1178,16 @@ document.addEventListener("click", e=>{
   else if (act==="hist-cancel"){ UI.hist=null; render(); }
   else if (act==="hist-go"){ const H=UI.hist; S.history=H.lines; S.historyFile=H.fileName; S.excelDebts=H.debts; if (H.budget.A) applyExcelBudget(H); UI.hist=null; const n=applyHistoryToTx(); toast(`${H.lines.length} lignes chargées. ${n} transaction(s) déjà importée(s) reclassée(s) selon votre Excel.`); render(); }
   else if (act==="go-comptes"){ go("comptes"); }
+  else if (act==="note-edit"){ UI.noteEdit=b.dataset.id; render(); const i=$("#note-in"); if(i){ i.focus(); i.setSelectionRange(i.value.length,i.value.length); } }
+  else if (act==="note-cancel"){ UI.noteEdit=null; render(); }
+  else if (act==="ev-edit"){ UI.evEdit=b.dataset.ev; UI.evDel=null; render(); }
+  else if (act==="ev-edit-cancel"){ UI.evEdit=null; render(); }
+  else if (act==="ev-del"){ UI.evDel=b.dataset.ev; UI.evEdit=null; render(); }
+  else if (act==="ev-del-cancel"){ UI.evDel=null; render(); }
+  else if (act==="ev-del-ok"){ const id=b.dataset.ev, ev=S.events.find(e=>e.id===id); const n=S.tx.filter(t=>t.event===id).length;
+    for (const t of S.tx) if (t.event===id){ t.event=null; t.why="Corrigé à la main"; }
+    S.events=S.events.filter(e=>e.id!==id); S.deletedEv={...(S.deletedEv||{}), [id]:Date.now()};
+    if (UI.f.event===id) UI.f.event=""; UI.evDel=null; toast(`Événement « ${ev?.name} » supprimé. ${n} transaction(s) gardent leur catégorie.`); render(); }
   else if (act==="ev-see"){ UI.f={acc:"",bud:"",cat:"",status:"",q:"",month:"",event:b.dataset.ev}; render(); }
   else if (act==="ev-clear"){ UI.f.event=""; render(); }
   else if (act==="go-compare"){ go("comptes"); setTimeout(()=>document.getElementById("compare")?.scrollIntoView(),50); }
@@ -1177,7 +1196,7 @@ document.addEventListener("click", e=>{
     else { const t={id:nid("t"),acc:h.payer+"".toLowerCase()==="A"?"a-cash":"a-cash",date:h.date,desc:h.desc||catName(h.cat),sub:"",amount:h.kind==="dep"?-h.amount:h.amount,balance:null,...fromHistory(h),subcat:null,status:"ok",source:"Excel",importId:null,matchId:null};
       t.acc = h.payer==="A"?"a-cash":"b-cash"; S.tx.push(t); h.matched=t.id; }
     toast(act==="h-ign"?"Ligne ignorée.":"Ajoutée au compte « Comptant / autre »."); render(); }
-  else if (act==="exp-csv"){ download(`transactions-${TODAY}.csv`, "\uFEFF"+"date,compte,description,montant,type,categorie,sous_categorie,pour_qui,etat\n"+S.tx.map(t=>[t.date,accLabel(acc(t.acc)),prettyDesc(t),t.amount.toFixed(2),t.type,catName(t.cat),t.subcat||"",t.budget?budLabel(t.budget):"",t.status].map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n"), "text/csv"); }
+  else if (act==="exp-csv"){ download(`transactions-${TODAY}.csv`, "\uFEFF"+"date,compte,description,note,montant,type,categorie,sous_categorie,pour_qui,etat\n"+S.tx.map(t=>[t.date,accLabel(acc(t.acc)),prettyDesc(t),t.note||"",t.amount.toFixed(2),t.type,catName(t.cat),t.subcat||"",t.budget?budLabel(t.budget):"",t.status].map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n"), "text/csv"); }
   else if (act==="backup"){ backupNow(); }
   else if (act==="sync-connect"){ Sync.connect(); }
   else if (act==="sync-now"){ Sync.now(); }
@@ -1237,6 +1256,12 @@ document.addEventListener("submit", e=>{
     S.tx.push({id:nid("t"),acc:$("#ad-acc").value,date:$("#ad-date").value,desc:$("#ad-desc").value,sub:"",amount:-Math.abs(amt),balance:null,type:"depense",cat:c||null,subcat:s||null,budget:$("#ad-bud").value||null,conf:100,why:"Saisie manuelle",status:"ok",source:"Manuel",importId:null,matchId:null});
     toast("Transaction ajoutée."); render(); }
   if (f==="cardstart"){ const id=e.target.dataset.acc; acc(id).cardStart={date:$("#cs-date-"+id).value,balance:r2(parseFloat($("#cs-amt-"+id).value)||0)}; toast("Solde de la carte enregistré."); render(); }
+  if (f==="note"){ const t=S.tx.find(x=>x.id===e.target.dataset.id); const v=$("#note-in").value.trim(); if (t){ if (v) t.note=v; else delete t.note; } UI.noteEdit=null; render(); return; }
+  if (f==="event-edit"){ const id=e.target.dataset.ev, ev=S.events.find(x=>x.id===id); if (!ev) return;
+    Object.assign(ev,{name:$("#eve-name").value.trim()||ev.name, date:$("#eve-date").value||ev.date, cat:($("#eve-cat").value.split("|")[0])||ev.cat, budget:$("#eve-bud").value||ev.budget, mod:Date.now()});
+    // Les transactions de l'événement suivent sa nouvelle catégorie et son « pour qui »
+    for (const t of S.tx) if (t.event===id) applyEvent(t,id);
+    UI.evEdit=null; toast(`Événement « ${ev.name} » modifié.`); render(); return; }
   if (f==="event"){ const ev={id:nid("ev"),name:$("#ev-name").value.trim(),date:$("#ev-date").value,cat:($("#ev-cat").value.split("|")[0])||"autres",budget:$("#ev-bud").value||"commun"}; S.events.push(ev); toast(`Événement « ${ev.name} » créé.`); render(); }
   if (f==="pwd"){ const a=$("#np1").value, b=$("#np2").value; if (a.length<10) return toast("Le mot de passe doit contenir au moins 10 caractères."); if (a!==b) return toast("Les deux mots de passe ne sont pas identiques.");
     Vault.setPassword(a).then(()=>{ toast("Mot de passe changé. Pensez à faire une nouvelle sauvegarde."); render(); }); return; }
@@ -1274,6 +1299,7 @@ function endDrag(){
   if ((d.target||d.group) && moveCat(d.id,d.target,d.after,d.group)){ const c=catById(d.id); toast(`« ${c.name} » déplacée dans ${GROUPS.find(g=>g.id===c.g).name}.`); render(); }
 }
 document.addEventListener("pointerup", endDrag); document.addEventListener("pointercancel", endDrag);
+document.addEventListener("keydown", e=>{ if (e.key==="Escape" && UI.noteEdit && e.target.id==="note-in"){ UI.noteEdit=null; render(); } });
 document.addEventListener("keydown", e=>{ if (e.key==="Escape" && UI.picker){ UI.picker=false; render(); document.querySelector('[data-act="m-pick"]')?.focus(); } });
 document.addEventListener("keydown", e=>{
   const h = e.target.closest?.(".drag-h"); if (!h || (e.key!=="ArrowUp"&&e.key!=="ArrowDown")) return;
