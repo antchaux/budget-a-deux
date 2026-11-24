@@ -78,7 +78,7 @@ function freshState(){
     catMode:{soins:"annee",permis:"annee"},
     salary:{A:0,B:0}, // salaire annuel net
     income:{A:{rmb_med:0,impot:0},B:{rmb_med:0,impot:0}}, // remboursements médicaux et retours d'impôt attendus par an
-    events:[], // suivi annuel des catégories ponctuelles
+    events:[], recurring:[], deletedRec:{}, // suivi annuel des catégories ponctuelles
     tx:[], rules:{}, imports:[], history:[], historyFile:null,
     planned:[],
     threshold:80, lastBackup:null,
@@ -430,7 +430,8 @@ function boot(data, keepView){
   if (data?.catOrder){ const pos=Object.fromEntries(data.catOrder.map((x,i)=>[x.id,i])); for (const c of CATS){ const o=data.catOrder.find(x=>x.id===c.id); if(o) c.g=o.g; } CATS.sort((a,b)=>(pos[a.id]??999)-(pos[b.id]??999)); }
   if (data?.catFlags) for (const c of CATS){ const f=data.catFlags[c.id]; if (f){ c.fixed=f.fixed; c.always=f.always; } }
   delete S.catOrder; delete S.catFlags;
-  S.deleted = S.deleted || {};
+  S.deleted = S.deleted || {}; S.recurring = S.recurring || []; S.deletedRec = S.deletedRec || {};
+  runRecurring();
   resetBaseline();
   if (!keepView){ UI.month=null; UI.pending=null; UI.hist=null;
     const h=location.hash.slice(1); UI.view = VIEWS.includes(h) ? h : "tableau"; }
@@ -452,7 +453,7 @@ function render(){
   document.querySelectorAll(".nav-btn").forEach(b=>b.setAttribute("aria-current", b.dataset.view===UI.view?"page":"false"));
   const n = toValidate().length; const bv=$("#badge-val"); bv.hidden=!n; bv.textContent=n;
   const days = S.lastBackup ? dayDiff(TODAY,S.lastBackup) : null;
-  $("#side-foot").innerHTML = `<div><span class="status-dot" style="background:${days==null||days>7?"var(--warn)":"var(--good)"}"></span>Sauvegarde : ${days==null?"aucune":days===0?"aujourd'hui":`il y a ${days} j`}</div><div>${Sync.side()}<button class="btn small" data-act="lock" style="margin-top:4px">Verrouiller</button><div class="muted" style="font-size:.7rem">Version 1.3.0</div>`;
+  $("#side-foot").innerHTML = `<div><span class="status-dot" style="background:${days==null||days>7?"var(--warn)":"var(--good)"}"></span>Sauvegarde : ${days==null?"aucune":days===0?"aujourd'hui":`il y a ${days} j`}</div><div>${Sync.side()}<button class="btn small" data-act="lock" style="margin-top:4px">Verrouiller</button><div class="muted" style="font-size:.7rem">Version 1.4.0</div>`;
   $("#view").innerHTML = ({tableau:vDash,transactions:vTx,importer:vImport,budgets:vBudgets,comptes:vAccounts,parametres:vSettings})[UI.view]();
 }
 const note = s => `<div class="proto-note">${s}</div>`;
@@ -630,6 +631,44 @@ function eventSummary(ev){
   const share = p => ev.budget==="commun" ? cost/2 : ev.budget===p ? cost : 0;
   return {n:L.length,out,back,cost,A:r2(share("A")),B:r2(share("B"))};
 }
+/* ---------- Transactions récurrentes saisies à la main ---------- */
+const FREQ = {once:"Une seule fois", week:"Chaque semaine", biweek:"Toutes les deux semaines", month:"Chaque mois", year:"Chaque année"};
+function addDays(d,n){ const t=new Date(d+"T12:00:00"); t.setDate(t.getDate()+n); return `${t.getFullYear()}-${pad(t.getMonth()+1)}-${pad(t.getDate())}`; }
+function addMonths(start,k){ const [y,m,d]=start.split("-").map(Number); const t=new Date(y,m-1+k,1); const last=new Date(t.getFullYear(),t.getMonth()+1,0).getDate(); return `${t.getFullYear()}-${pad(t.getMonth()+1)}-${pad(Math.min(d,last))}`; }
+function occurrences(rc, until){
+  const out=[], stop = rc.end && rc.end<until ? rc.end : until;
+  for (let i=0; i<2000; i++){ const d = rc.freq==="week"?addDays(rc.start,7*i):rc.freq==="biweek"?addDays(rc.start,14*i):rc.freq==="month"?addMonths(rc.start,i):addMonths(rc.start,12*i); if (d>stop) break; out.push(d); }
+  return out;
+}
+function nextDate(rc){ const all=occurrences(rc, addMonths(TODAY,13)); return all.find(d=>d>TODAY && (!rc.end||d<=rc.end)) || null; }
+/* Crée les occurrences échues manquantes. Identifiant fixe (règle + date) : les deux appareils créent la même, et une occurrence supprimée ne revient pas. */
+function runRecurring(){
+  let n=0; S.deleted=S.deleted||{};
+  const have=new Set(S.tx.map(t=>t.id));
+  for (const rc of S.recurring||[]){
+    for (const d of occurrences(rc, TODAY)){
+      const id=`${rc.id}_${d}`; if (have.has(id) || S.deleted[id]) continue;
+      S.tx.push({id,acc:rc.acc,date:d,desc:rc.desc,sub:"",amount:rc.amount,balance:null,type:rc.type,cat:rc.cat,subcat:rc.subcat||null,budget:rc.budget,conf:100,why:"Transaction récurrente",status:"ok",source:"Récurrente",recId:rc.id,importId:null,matchId:null});
+      have.add(id); n++;
+    }
+  }
+  return n;
+}
+function recurringCard(){
+  const L=(S.recurring||[]).slice().sort((a,b)=>a.desc.localeCompare(b.desc));
+  if (!L.length) return "";
+  return `<div class="card"><div class="card-h"><h2>Transactions récurrentes</h2><span class="small muted">Saisies à la main, créées à chaque échéance</span></div>
+    <div class="table-x"><table><thead><tr><th>Description</th><th>Fréquence</th><th>Compte</th><th>Catégorie</th><th class="r">Montant</th><th>Prochaine</th><th></th></tr></thead><tbody>
+    ${L.map(rc=>{ const n=S.tx.filter(t=>t.recId===rc.id).length, nx=nextDate(rc), stopped=rc.end&&rc.end<=TODAY;
+      return `${UI.recDel===rc.id?`<tr><td colspan="7"><div class="confirm-box" style="margin:0"><b>Supprimer la récurrence « ${esc(rc.desc)} » ?</b><div class="small">Elle a créé ${n} transaction(s).</div>
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><button class="btn" data-act="rec-del-cancel">Annuler</button><button class="btn" data-act="rec-del-ok" data-rec="${rc.id}" data-tx="0">Supprimer, garder les ${n} transactions</button><button class="btn danger" data-act="rec-del-ok" data-rec="${rc.id}" data-tx="1">Supprimer aussi les transactions</button></div></div></td></tr>`:""}
+      <tr><td><b>${esc(rc.desc)}</b><div class="small muted">depuis le ${rc.start}${rc.end?` · jusqu'au ${rc.end}`:""} · ${n} créée(s)</div></td><td>${FREQ[rc.freq]}</td><td class="small">${esc(accLabel(acc(rc.acc)))}</td>
+        <td>${esc(catName(rc.cat))}<div class="small muted">${rc.budget?esc(budLabel(rc.budget)):""}</div></td><td class="r num ${rc.amount>0?"amt in":""}">${rc.amount>0?"+":""}${fmt(rc.amount)}</td>
+        <td class="num">${stopped?'<span class="chip neutral">Arrêtée</span>':nx||"—"}</td>
+        <td class="ev-acts">${stopped?"":`<button class="btn small" data-act="rec-stop" data-rec="${rc.id}">Arrêter</button>`}<button class="btn small ghost-bad" data-act="rec-del" data-rec="${rc.id}">Supprimer</button></td></tr>`; }).join("")}
+    </tbody></table></div>
+    <div class="small muted" style="margin-top:8px">Pour changer le montant ou la catégorie, arrêtez la récurrence et créez-en une nouvelle. Une occurrence se modifie ou se supprime comme toute autre transaction.</div></div>`;
+}
 function eventsCard(){
   const evs = S.events.slice().sort((a,b)=>b.date.localeCompare(a.date));
   return `<div class="card"><div class="card-h"><h2>Événements</h2><span class="small muted">Activités entre amis : dépenses et remboursements reliés</span></div>
@@ -757,16 +796,21 @@ function vTx(){
   L.sort((a,b)=> UI.sortAsc ? a.date.localeCompare(b.date) : b.date.localeCompare(a.date));
   const nVal = L.filter(t=>t.status==="avalider").length;
   return `<div class="toolbar"><h1>Transactions</h1><button class="btn" data-act="add-open">+ Ajouter à la main</button></div>
-  ${eventsCard()}
-  ${f.event?`<div class="proto-note">Transactions de l'événement « ${esc(S.events.find(e=>e.id===f.event)?.name)} », tous mois confondus. <button class="btn ghost small" data-act="ev-clear">Retirer ce filtre</button></div>`:""}
-  <div id="add-form" hidden class="card"><form class="form" data-form="add">
-    <label>Date<input type="date" id="ad-date" value="${TODAY}" required></label>
-    <label>Payé par (compte)<select id="ad-acc">${S.accounts.map(a=>`<option value="${a.id}">${esc(accLabel(a))}</option>`).join("")}</select></label>
+  <div id="add-form" class="card" ${UI.addOpen?"":"hidden"}><div class="card-h"><h2>Ajouter une transaction</h2></div><form class="form" data-form="add">
+    <label>Date${UI.addRep&&UI.addRep!=="once"?" de début":""}<input type="date" id="ad-date" value="${TODAY}" required></label>
+    <label>Payé par (compte)<select id="ad-acc">${S.accounts.map(a=>`<option value="${a.id}" ${a.kind==="autre"&&a.owner==="A"?"selected":""}>${esc(accLabel(a))}</option>`).join("")}</select></label>
     <label>Description<input id="ad-desc" required placeholder="Marché Jean-Talon"></label>
-    <label>Montant (dépense)<input id="ad-amt" type="number" step="0.01" min="0" required placeholder="25,00"></label>
+    <label>Sens<select id="ad-dir"><option value="out">Dépense</option><option value="in">Entrée d'argent</option></select></label>
+    <label>Montant<input id="ad-amt" type="number" step="0.01" min="0" required placeholder="25,00"></label>
     <label>Catégorie<select id="ad-cat">${catOptions("courses",null,"depense")}</select></label>
     <label>Pour qui<select id="ad-bud">${budOptions("commun")}</select></label>
-    <button class="btn primary" type="submit">Ajouter</button></form></div>
+    <label>Répéter<select id="ad-rep">${Object.entries(FREQ).map(([k,v])=>`<option value="${k}" ${(UI.addRep||"once")===k?"selected":""}>${v}</option>`).join("")}</select></label>
+    ${UI.addRep&&UI.addRep!=="once"?`<label>Jusqu'au (facultatif)<input type="date" id="ad-end"></label>`:""}
+    <button class="btn primary" type="submit">Ajouter</button></form>
+    <div class="small muted" style="margin-top:8px">Une transaction récurrente est créée automatiquement à chaque échéance, jusqu'à aujourd'hui, puis au fil du temps. À réserver aux dépenses absentes de vos relevés (argent comptant, autre compte) : si une occurrence apparaît aussi dans un relevé importé, l'import la signale comme doublon.</div></div>
+  ${recurringCard()}
+  ${eventsCard()}
+  ${f.event?`<div class="proto-note">Transactions de l'événement « ${esc(S.events.find(e=>e.id===f.event)?.name)} », tous mois confondus. <button class="btn ghost small" data-act="ev-clear">Retirer ce filtre</button></div>`:""}
   <div class="card">
     <div class="filters">
       <select id="f-month" aria-label="Mois"><option value="">Tous les mois</option>${months.map(k=>`<option value="${k}" ${mSel===k?"selected":""}>${monthLabel(k)}</option>`).join("")}</select>
@@ -836,6 +880,8 @@ function analyze(p, accId){
     const k = dkey(r.date,r.amount,merchantOf(a.kind,r.desc,r.sub),a.kind==="cheque"?r.balance:null);
     if (pool[k]){ pool[k]--; item.flag="doublon"; item.include=false; return item; }
     if (r.pending){ item.flag="attente"; item.include=false; return item; }
+    const recDup = S.tx.find(t=>t.recId && !usedMatch.has(t.id) && acc(t.acc)?.owner===a.owner && Math.abs(t.amount-r.amount)<0.005 && Math.abs(dayDiff(t.date,r.date))<=4);
+    if (recDup){ usedMatch.add(recDup.id); item.flag="recurrente"; item.include=false; return item; }
     if (c.type==="paiement_carte"){
       const o = S.tx.find(t=>t.type==="paiement_carte"&&!t.matchId&&!usedMatch.has(t.id)&&t.acc!==accId&&acc(t.acc)?.owner===a.owner&&Math.abs(t.amount+r.amount)<0.005&&Math.abs(dayDiff(t.date,r.date))<=3);
       if (o){ usedMatch.add(o.id); item.matchWith=o.id; item.flag="apparie"; } else item.flag="paiement";
@@ -882,7 +928,7 @@ function undoImport(id){
   const a = acc(imp.acc); a.opening=imp.snapshot.opening; a.bank=imp.snapshot.bank;
   imp.undone = true; toast(`Import annulé : ${gone.size} transaction(s) retirée(s).`); render();
 }
-const FLAG = {doublon:["neutral","Doublon, ignoré"],attente:["neutral","En attente, ignoré"],apparie:["info","Paiement de carte · apparié"],paiement:["info","Paiement de carte · en attente de l'autre relevé"],excel:["good","✓ Trouvé dans l'Excel"]};
+const FLAG = {recurrente:["neutral","Déjà saisie (récurrente), ignorée"],doublon:["neutral","Doublon, ignoré"],attente:["neutral","En attente, ignoré"],apparie:["info","Paiement de carte · apparié"],paiement:["info","Paiement de carte · en attente de l'autre relevé"],excel:["good","✓ Trouvé dans l'Excel"]};
 function vHistoryCard(){
   const H = UI.hist;
   const matched = S.history.filter(h=>h.matched).length, total = S.history.length;
@@ -1172,7 +1218,14 @@ document.addEventListener("click", e=>{
   else if (act==="see-val"){ UI.f={acc:"",bud:"",cat:"",status:"avalider",q:"",month:""}; go("transactions"); }
   else if (act==="ok"){ const t=S.tx.find(x=>x.id===b.dataset.id); t.status="ok"; t.conf=100; t.why="Validé"; const n=learnFrom(t); toast(n?`Validé. Appliqué à ${n} autre(s) transaction(s) semblable(s).`:"Validé."); render(); }
   else if (act==="ok-all"){ document.querySelectorAll(".tx[data-id]").forEach(r=>{ const t=S.tx.find(x=>x.id===r.dataset.id); if(t&&t.status==="avalider"){t.status="ok";t.why="Validé";learnFrom(t);} }); toast("Transactions validées."); render(); }
-  else if (act==="add-open"){ $("#add-form").hidden=!$("#add-form").hidden; }
+  else if (act==="add-open"){ UI.addOpen=!UI.addOpen; render(); if (UI.addOpen) $("#ad-desc")?.focus(); }
+  else if (act==="rec-stop"){ const rc=S.recurring.find(x=>x.id===b.dataset.rec); if (rc){ rc.end=TODAY; rc.mod=Date.now(); toast(`« ${rc.desc} » arrêtée. Les transactions déjà créées sont gardées.`); render(); } }
+  else if (act==="rec-del"){ UI.recDel=b.dataset.rec; render(); }
+  else if (act==="rec-del-cancel"){ UI.recDel=null; render(); }
+  else if (act==="rec-del-ok"){ const id=b.dataset.rec, rc=S.recurring.find(x=>x.id===id), withTx=b.dataset.tx==="1";
+    S.recurring=S.recurring.filter(x=>x.id!==id); S.deletedRec={...(S.deletedRec||{}),[id]:Date.now()};
+    const n = withTx ? S.tx.filter(t=>t.recId===id).length : 0; if (withTx) S.tx=S.tx.filter(t=>t.recId!==id);
+    UI.recDel=null; toast(`Récurrence « ${rc?.desc} » supprimée${withTx?`, avec ses ${n} transaction(s)`:""}.`); render(); }
   else if (act==="imp-cancel"){ UI.pending=null; render(); }
   else if (act==="imp-go"){ doImport(); }
   else if (act==="hist-cancel"){ UI.hist=null; render(); }
@@ -1223,6 +1276,8 @@ document.addEventListener("change", e=>{
     const n = learnFrom(t); toast(n?`Retenu pour « ${prettyDesc(t)} » et appliqué à ${n} autre(s).`:`Retenu pour « ${prettyDesc(t)} ».`); render(); return;
   }
   if (el.id==="pick-year"){ if (el.value){ UI.period="annee"; UI.year=el.value; } render(); return; }
+  if (el.id==="ad-rep"){ UI.addRep=el.value; const keep={}; for (const id of ["ad-date","ad-acc","ad-desc","ad-dir","ad-amt","ad-cat","ad-bud"]) keep[id]=$("#"+id)?.value; render(); for (const [id,v] of Object.entries(keep)) if ($("#"+id)&&v!=null) $("#"+id).value=v; return; }
+  if (el.id==="ad-dir"){ const sel=$("#ad-cat"); const cur=sel.value; sel.innerHTML=catOptions(el.value==="in"?"r_autres":"courses",null,el.value==="in"?"revenu":"depense"); return; }
   if (el.id==="hide-neutral"){ UI.hideNeutral=el.checked; try{ localStorage.setItem("hideNeutral", el.checked?"1":""); }catch(_){} render(); return; }
   if (el.id && el.id.startsWith("f-")){ UI.f[el.id.slice(2)]=el.value; render(); return; }
   if (el.id==="imp-acc"){ const P=UI.pending; P.accId=el.value||null; P.items=P.accId?analyze(P.parsed,P.accId):[]; render(); return; }
@@ -1252,9 +1307,12 @@ document.addEventListener("keydown", e=>{
 document.addEventListener("input", e=>{ if (e.target.id==="th") $("#th-val").textContent=e.target.value+" %"; if (e.target.id==="f-q"){ UI.f.q=e.target.value; clearTimeout(window.__q); window.__q=setTimeout(()=>{ render(); const q=$("#f-q"); if(q){q.focus(); q.setSelectionRange(q.value.length,q.value.length);} },300);} });
 document.addEventListener("submit", e=>{
   e.preventDefault(); const f=e.target.dataset.form;
-  if (f==="add"){ const amt=parseFloat($("#ad-amt").value); const [c,s]=$("#ad-cat").value.split("|");
-    S.tx.push({id:nid("t"),acc:$("#ad-acc").value,date:$("#ad-date").value,desc:$("#ad-desc").value,sub:"",amount:-Math.abs(amt),balance:null,type:"depense",cat:c||null,subcat:s||null,budget:$("#ad-bud").value||null,conf:100,why:"Saisie manuelle",status:"ok",source:"Manuel",importId:null,matchId:null});
-    toast("Transaction ajoutée."); render(); }
+  if (f==="add"){ const amt=Math.abs(parseFloat($("#ad-amt").value)); const [c,sc]=$("#ad-cat").value.split("|"); const dir=$("#ad-dir").value, rep=$("#ad-rep").value;
+    const base = {acc:$("#ad-acc").value, desc:$("#ad-desc").value.trim(), amount: dir==="in"?amt:-amt, type: dir==="in"?"revenu":"depense", cat:c||null, subcat:sc||null, budget:$("#ad-bud").value||null};
+    if (rep==="once"){ S.tx.push({id:nid("t"),...base,date:$("#ad-date").value,sub:"",balance:null,conf:100,why:"Saisie manuelle",status:"ok",source:"Manuel",importId:null,matchId:null}); toast("Transaction ajoutée."); }
+    else { const rc={id:nid("rec"),...base,freq:rep,start:$("#ad-date").value,end:$("#ad-end")?.value||null,mod:Date.now()}; S.recurring.push(rc);
+      const n=runRecurring(); toast(`Transaction récurrente créée (${FREQ[rep].toLowerCase()})${n?` : ${n} occurrence(s) jusqu'à aujourd'hui`:""}. Prochaine : ${nextDate(rc)||"—"}.`); }
+    UI.addOpen=false; UI.addRep="once"; render(); flushSave(); }
   if (f==="cardstart"){ const id=e.target.dataset.acc; acc(id).cardStart={date:$("#cs-date-"+id).value,balance:r2(parseFloat($("#cs-amt-"+id).value)||0)}; toast("Solde de la carte enregistré."); render(); }
   if (f==="note"){ const t=S.tx.find(x=>x.id===e.target.dataset.id); const v=$("#note-in").value.trim(); if (t){ if (v) t.note=v; else delete t.note; } UI.noteEdit=null; render(); return; }
   if (f==="event-edit"){ const id=e.target.dataset.ev, ev=S.events.find(x=>x.id===id); if (!ev) return;

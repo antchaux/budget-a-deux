@@ -38,6 +38,13 @@ function mergeData(L, R){
   for (const e of [...(older.events || []), ...(newer.events || [])]){ const c = evm.get(e.id); if (!c || (e.mod || 0) >= (c.mod || 0)) evm.set(e.id, e); }
   out.events = [...evm.values()].filter(e => !delEv[e.id]);
   out.deletedEv = delEv;
+  // Récurrences : même principe
+  const delRec = { ...(older.deletedRec || {}) };
+  for (const [id, x] of Object.entries(newer.deletedRec || {})) delRec[id] = Math.max(delRec[id] || 0, x);
+  const rcm = new Map();
+  for (const e of [...(older.recurring || []), ...(newer.recurring || [])]){ const c = rcm.get(e.id); if (!c || (e.mod || 0) >= (c.mod || 0)) rcm.set(e.id, e); }
+  out.recurring = [...rcm.values()].filter(e => !delRec[e.id]);
+  out.deletedRec = delRec;
   out.planned = unionById(older.planned, newer.planned);
   // Règles apprises : réunion par commerçant et montant
   const rules = JSON.parse(JSON.stringify(older.rules || {}));
